@@ -459,6 +459,81 @@
     justify-content: flex-end;
   }
 
+  /* Payment modal */
+  .pay-total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 12px 0;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .pay-total-label { font-size: 14px; font-weight: 600; color: var(--muted); }
+  .pay-total-value {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .pay-method {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .pay-method:last-of-type { border-bottom: none; }
+  .pay-method-label {
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 70px;
+  }
+  .pay-method-input {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 700;
+    background: var(--bg);
+    color: var(--fg);
+    text-align: right;
+  }
+  .pay-method-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(212,118,44,0.15);
+  }
+  .pay-outstanding {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 14px 0 4px;
+    margin-top: 8px;
+    border-top: 2px solid var(--border);
+  }
+  .pay-outstanding-label { font-size: 15px; font-weight: 700; }
+  .pay-outstanding-value {
+    font-family: var(--font-mono);
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .pay-outstanding-value.paid { color: var(--confirm); }
+  .pay-outstanding-value.owed { color: var(--danger); }
+  .pay-change {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 4px 0;
+  }
+  .pay-change-label { font-size: 13px; color: var(--muted); }
+  .pay-change-value {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--confirm);
+  }
+
   .export-textarea {
     width: 100%;
     min-height: 200px;
@@ -553,6 +628,46 @@
   </div>
 
   <div class="history-view" id="historyView"></div>
+</div>
+
+<!-- Payment Modal -->
+<div class="modal-overlay" id="payModal" hidden>
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <span class="modal-title">Payment</span>
+      <button class="modal-close" onclick="cancelPay()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="pay-total-row">
+        <span class="pay-total-label">Order Total</span>
+        <span class="pay-total-value" id="payTotal">$0.00</span>
+      </div>
+      <div class="pay-method">
+        <span class="pay-method-label">Voucher</span>
+        <input class="pay-method-input" id="payVoucher" type="number" min="0" step="0.01" placeholder="0.00" oninput="updatePayment()">
+      </div>
+      <div class="pay-method">
+        <span class="pay-method-label">Cash</span>
+        <input class="pay-method-input" id="payCash" type="number" min="0" step="0.01" placeholder="0.00" oninput="updatePayment()">
+      </div>
+      <div class="pay-method">
+        <span class="pay-method-label">POS</span>
+        <input class="pay-method-input" id="payPos" type="number" min="0" step="0.01" placeholder="0.00" oninput="updatePayment()">
+      </div>
+      <div class="pay-outstanding">
+        <span class="pay-outstanding-label" id="payOutstandingLabel">Outstanding</span>
+        <span class="pay-outstanding-value owed" id="payOutstandingValue">$0.00</span>
+      </div>
+      <div class="pay-change" id="payChangeRow" hidden>
+        <span class="pay-change-label">Change due</span>
+        <span class="pay-change-value" id="payChangeValue">$0.00</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-clear" onclick="cancelPay()">Cancel</button>
+      <button class="btn btn-confirm" id="payConfirmBtn" onclick="completePay()" disabled>Confirm Payment</button>
+    </div>
+  </div>
 </div>
 
 <div class="modal-overlay" id="exportModal" hidden>
@@ -696,20 +811,95 @@ function renderCart() {
   }).join('');
 }
 
+var pendingOrder = null;
+
 function confirmOrder() {
   if (cart.length === 0) return;
-  var order = {
+  pendingOrder = {
     id: generateInvoiceId(),
     items: cart.map(function(i) { return { name: i.name, price: i.price, qty: i.qty }; }),
     total: getTotal(cart),
     date: new Date().toISOString(),
     edited: false,
+    payment: null,
   };
-  orders.unshift(order);
+  openPayment(pendingOrder.total);
+}
+
+function openPayment(total) {
+  document.getElementById('payTotal').textContent = fmt(total);
+  document.getElementById('payVoucher').value = '';
+  document.getElementById('payCash').value = '';
+  document.getElementById('payPos').value = '';
+  updatePayment();
+  document.getElementById('payModal').hidden = false;
+  document.getElementById('payVoucher').focus();
+}
+
+function updatePayment() {
+  if (!pendingOrder) return;
+  var total = pendingOrder.total;
+  var voucher = parseFloat(document.getElementById('payVoucher').value) || 0;
+  var cash = parseFloat(document.getElementById('payCash').value) || 0;
+  var pos = parseFloat(document.getElementById('payPos').value) || 0;
+  var paid = voucher + cash + pos;
+  var outstanding = total - paid;
+
+  var label = document.getElementById('payOutstandingLabel');
+  var value = document.getElementById('payOutstandingValue');
+  var changeRow = document.getElementById('payChangeRow');
+  var changeValue = document.getElementById('payChangeValue');
+  var btn = document.getElementById('payConfirmBtn');
+
+  if (outstanding > 0.005) {
+    label.textContent = 'Outstanding';
+    value.textContent = fmt(outstanding);
+    value.className = 'pay-outstanding-value owed';
+    changeRow.hidden = true;
+    btn.disabled = true;
+  } else {
+    label.textContent = 'Fully Paid';
+    value.textContent = fmt(0);
+    value.className = 'pay-outstanding-value paid';
+    btn.disabled = false;
+    if (outstanding < -0.005) {
+      changeRow.hidden = false;
+      changeValue.textContent = fmt(Math.abs(outstanding));
+    } else {
+      changeRow.hidden = true;
+    }
+  }
+}
+
+function completePay() {
+  if (!pendingOrder) return;
+  var voucher = parseFloat(document.getElementById('payVoucher').value) || 0;
+  var cash = parseFloat(document.getElementById('payCash').value) || 0;
+  var pos = parseFloat(document.getElementById('payPos').value) || 0;
+
+  pendingOrder.payment = {
+    voucher: Math.round(voucher * 100) / 100,
+    cash: Math.round(cash * 100) / 100,
+    pos: Math.round(pos * 100) / 100,
+  };
+
+  var change = voucher + cash + pos - pendingOrder.total;
+  if (change > 0.005) {
+    pendingOrder.payment.change = Math.round(change * 100) / 100;
+  }
+
+  orders.unshift(pendingOrder);
   saveOrders();
   cart = [];
   renderCart();
-  showToast(order.id + ' confirmed');
+  document.getElementById('payModal').hidden = true;
+  showToast(pendingOrder.id + ' confirmed');
+  pendingOrder = null;
+}
+
+function cancelPay() {
+  document.getElementById('payModal').hidden = true;
+  pendingOrder = null;
 }
 
 function renderHistory() {
@@ -730,6 +920,15 @@ function renderHistory() {
     var dateStr = d.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' })
       + ' ' + d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
     var itemsStr = order.items.map(function(i) { return i.qty + '× ' + i.name; }).join(', ');
+    var payStr = '';
+    if (order.payment) {
+      var parts = [];
+      if (order.payment.voucher) parts.push('Voucher ' + fmt(order.payment.voucher));
+      if (order.payment.cash) parts.push('Cash ' + fmt(order.payment.cash));
+      if (order.payment.pos) parts.push('POS ' + fmt(order.payment.pos));
+      if (order.payment.change) parts.push('Change ' + fmt(order.payment.change));
+      payStr = '<div class="history-items-list" style="margin-bottom:8px">' + parts.join(' &middot; ') + '</div>';
+    }
     return '<div class="history-card">' +
       '<div class="history-header">' +
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
@@ -740,6 +939,7 @@ function renderHistory() {
       '</div>' +
       '<div class="history-date" style="margin-bottom:8px">' + dateStr + '</div>' +
       '<div class="history-items-list">' + itemsStr + '</div>' +
+      payStr +
       '<div class="history-actions">' +
         '<button class="btn-sm btn-edit" onclick="openEdit(' + idx + ')">Edit Order</button>' +
       '</div>' +
@@ -754,16 +954,20 @@ function generateCsv() {
     var s = String(v);
     return (s.indexOf(',') >= 0 || s.indexOf('"') >= 0 || s.indexOf('\n') >= 0) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
-  var rows = ['Invoice ID,Date,Time,Item,Qty,Unit Price,Line Total,Order Total,Status'];
+  var rows = ['Invoice ID,Date,Time,Item,Qty,Unit Price,Line Total,Order Total,Voucher,Cash,POS,Change,Status'];
   orders.forEach(function(order) {
     var d = new Date(order.date);
     var dateStr = d.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
     var timeStr = d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     var status = order.edited ? 'Edited' : 'Original';
+    var p = order.payment || {};
     order.items.forEach(function(item) {
       rows.push([order.id, dateStr, timeStr, escape(item.name), item.qty,
         item.price.toFixed(2), (item.price * item.qty).toFixed(2),
-        order.total.toFixed(2), status].join(','));
+        order.total.toFixed(2),
+        (p.voucher || 0).toFixed(2), (p.cash || 0).toFixed(2),
+        (p.pos || 0).toFixed(2), (p.change || 0).toFixed(2),
+        status].join(','));
     });
   });
   return rows.join('\n');
@@ -778,6 +982,7 @@ function generateJson() {
         return { name: i.name, qty: i.qty, unitPrice: i.price, lineTotal: i.price * i.qty };
       }),
       total: order.total,
+      payment: order.payment || null,
       edited: order.edited,
       editedAt: order.editedDate || null,
     };
